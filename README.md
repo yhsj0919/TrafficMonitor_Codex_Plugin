@@ -6,18 +6,20 @@
 
 - `Codex 5h Remaining`：5 小时用量窗口的剩余百分比。
 - `Codex Weekly Remaining`：周用量窗口的剩余百分比。
+- `Codex Plan Expires`：订阅到期时间（本地时区，格式 `MM-DD HH:MM`）。缺少 `tokens.account_id` 或订阅接口无到期字段时显示 `--`。
+- `Codex Reset Expires`：可用重置卡最近到期时间（本地时区，格式 `MM-DD HH:MM`）。无可用重置卡或接口失败时显示 `--`。
 
-鼠标提示会显示剩余百分比、重置倒计时，或最近一次获取失败的错误信息。
+鼠标提示会显示剩余百分比、用量窗口重置具体时间（`MM-DD HH:MM`）、计划类型、订阅到期与是否自动续费、重置卡数量及每张到期时间，或最近一次获取失败的错误信息。
 
 ## 数据来源
 
-插件读取 `auth.json` 中的 `tokens.access_token`。可在插件选项中指定文件路径；留空时，按以下规则确定默认路径（不会在文件读取失败后尝试其他位置）：
+插件读取 `auth.json` 中的 `tokens.access_token`，以及可选的 `tokens.account_id`。可在插件选项中指定文件路径；留空时，按以下规则确定默认路径（不会在文件读取失败后尝试其他位置）：
 
 1. 设置了 `CODEX_HOME` 时，使用 `%CODEX_HOME%\auth.json`。
 2. 否则，使用 `%USERPROFILE%\.codex\auth.json`。
 3. 两个环境变量均不可用时，使用 `.codex\auth.json`。
 
-随后调用 `https://chatgpt.com/backend-api/wham/usage` 获取用量数据。
+随后调用 `https://chatgpt.com/backend-api/wham/usage` 获取用量数据。若存在 `account_id`，再调用 `https://chatgpt.com/backend-api/subscriptions?account_id=...` 读取 `active_until`（订阅到期时间）和 `will_renew`。另调用 `https://chatgpt.com/backend-api/wham/rate-limit-reset-credits` 读取可用重置卡及其 `expires_at`。订阅与重置卡信息获取失败不影响用量百分比显示。
 
 ## 插件选项
 
@@ -34,7 +36,7 @@
 
 ## 安装
 
-将生成的 `CodexUsage.dll` 复制到 TrafficMonitor 的 `plugins` 目录，然后重启 TrafficMonitor，并在插件管理或显示项目设置中启用这两个显示项目。
+将生成的 `CodexUsage.dll` 复制到 TrafficMonitor 的 `plugins` 目录，然后重启 TrafficMonitor，并在插件管理或显示项目设置中启用需要的显示项目。
 
 插件与 TrafficMonitor 的架构需要匹配。令牌过期或缺少 `tokens.access_token` 时，需要先通过 Codex 重新登录。构建、测试和排错方法见 [开发说明](./Development.md)。
 

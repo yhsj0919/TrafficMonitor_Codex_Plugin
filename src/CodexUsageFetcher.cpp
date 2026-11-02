@@ -144,13 +144,13 @@ UsageSnapshot CodexUsageFetcher::Fetch(const CodexUsageConfig& input) const {
         snapshot.errorMessage = errorMessage;
         return snapshot;
     }
-    std::optional<std::string> accessToken = ReadAccessToken(config, &errorMessage);
-    if (!accessToken.has_value()) {
+    std::optional<CodexAuthInfo> auth = ReadAuthInfo(config, &errorMessage);
+    if (!auth.has_value()) {
         snapshot.errorMessage = errorMessage;
         return snapshot;
     }
 
-    std::optional<std::string> usageJson = HttpGetUsageJson(*accessToken, config, &errorMessage);
+    std::optional<std::string> usageJson = HttpGetUsageJson(*auth, config, &errorMessage);
     if (!usageJson.has_value()) {
         snapshot.errorMessage = errorMessage;
         return snapshot;
@@ -159,11 +159,27 @@ UsageSnapshot CodexUsageFetcher::Fetch(const CodexUsageConfig& input) const {
     snapshot = ParseUsageJson(*usageJson, &errorMessage);
     if (!snapshot.success) {
         snapshot.errorMessage = errorMessage;
+        return snapshot;
+    }
+
+    // Subscription and reset-credit expiry are best-effort and must not hide usage data.
+    if (!auth->accountId.empty()) {
+        std::wstring subscriptionError;
+        std::optional<std::string> subscriptionJson = HttpGetSubscriptionJson(*auth, config, &subscriptionError);
+        if (subscriptionJson.has_value()) {
+            ApplySubscriptionJson(*subscriptionJson, &snapshot, &subscriptionError);
+        }
+    }
+
+    std::wstring resetCreditsError;
+    if (std::optional<std::string> resetCreditsJson = HttpGetResetCreditsJson(*auth, config, &resetCreditsError);
+        resetCreditsJson.has_value()) {
+        ApplyResetCreditsJson(*resetCreditsJson, &snapshot, &resetCreditsError);
     }
     return snapshot;
 }
 
-std::optional<std::string> CodexUsageFetcher::ReadAccessToken(const CodexUsageConfig& config, std::wstring* errorMessage) const {
+std::optional<CodexAuthInfo> CodexUsageFetcher::ReadAuthInfo(const CodexUsageConfig& config, std::wstring* errorMessage) const {
     const std::wstring authPath = ResolveCodexAuthPath(config);
     std::optional<std::string> jsonText = LoadFileUtf8(authPath, errorMessage);
     if (!jsonText.has_value()) {
@@ -189,7 +205,14 @@ std::optional<std::string> CodexUsageFetcher::ReadAccessToken(const CodexUsageCo
         return std::nullopt;
     }
 
-    return std::string(*token);
+    CodexAuthInfo auth;
+    auth.accessToken = std::string(*token);
+    const jsonlite::Value* accountId = tokens != nullptr ? tokens->Find("account_id") : nullptr;
+    if (auto accountIdString = accountId != nullptr ? accountId->AsString() : std::nullopt;
+        accountIdString.has_value()) {
+        auth.accountId = std::string(*accountIdString);
+    }
+    return auth;
 }
 
 std::optional<std::string> CodexUsageFetcher::LoadFileUtf8(const std::wstring& path, std::wstring* errorMessage) const {
@@ -224,12 +247,47 @@ std::optional<std::string> CodexUsageFetcher::LoadFileUtf8(const std::wstring& p
     return contents;
 }
 
-std::optional<std::string> CodexUsageFetcher::HttpGetUsageJson(const std::string& accessToken, const CodexUsageConfig& config, std::wstring* errorMessage) const {
+std::vector<std::wstring> CodexUsageFetcher::BuildAuthHeaders(const CodexAuthInfo& auth) const {
+    std::vector<std::wstring> headers = {
+        L"Authorization: Bearer " + Utf8ToWide(auth.accessToken),
+        L"Accept: application/json",
+    };
+    if (!auth.accountId.empty()) {
+        headers.push_back(L"ChatGPT-Account-Id: " + Utf8ToWide(auth.accountId));
+    }
+    return headers;
+}
+
+std::optional<std::string> CodexUsageFetcher::HttpGetUsageJson(const CodexAuthInfo& auth, const CodexUsageConfig& config, std::wstring* errorMessage) const {
     return HttpGetJson(
         L"TrafficMonitorCodexUsage/0.1",
         L"chatgpt.com",
         L"/backend-api/wham/usage",
-        { L"Authorization: Bearer " + Utf8ToWide(accessToken) },
+        BuildAuthHeaders(auth),
+        config,
+        errorMessage);
+}
+
+std::optional<std::string> CodexUsageFetcher::HttpGetSubscriptionJson(const CodexAuthInfo& auth,
+                                                                     const CodexUsageConfig& config,
+                                                                     std::wstring* errorMessage) const {
+    return HttpGetJson(
+        L"TrafficMonitorCodexUsage/0.1",
+        L"chatgpt.com",
+        L"/backend-api/subscriptions?account_id=" + Utf8ToWide(auth.accountId),
+        BuildAuthHeaders(auth),
+        config,
+        errorMessage);
+}
+
+std::optional<std::string> CodexUsageFetcher::HttpGetResetCreditsJson(const CodexAuthInfo& auth,
+                                                                     const CodexUsageConfig& config,
+                                                                     std::wstring* errorMessage) const {
+    return HttpGetJson(
+        L"TrafficMonitorCodexUsage/0.1",
+        L"chatgpt.com",
+        L"/backend-api/wham/rate-limit-reset-credits",
+        BuildAuthHeaders(auth),
         config,
         errorMessage);
 }

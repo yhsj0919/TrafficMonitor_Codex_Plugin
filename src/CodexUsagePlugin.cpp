@@ -4,7 +4,6 @@
 
 #include "PluginInterface.h"
 
-#include <array>
 #include <chrono>
 #include <mutex>
 #include <string>
@@ -14,20 +13,24 @@ namespace {
 
 class CodexUsageItem final : public IPluginItem {
 public:
-    enum class Window {
+    enum class Kind {
         FiveHour,
         Weekly,
+        SubscriptionExpiry,
+        ResetCreditExpiry,
     };
 
-    CodexUsageItem(Window window, const wchar_t* name, const wchar_t* id, const wchar_t* label)
-        : window_(window), name_(name), id_(id), label_(label) {}
+    CodexUsageItem(Kind kind, const wchar_t* name, const wchar_t* id, const wchar_t* label, const wchar_t* sample)
+        : kind_(kind), name_(name), id_(id), label_(label), sample_(sample) {}
 
     const wchar_t* GetItemName() const override { return name_; }
     const wchar_t* GetItemId() const override { return id_; }
     const wchar_t* GetItemLableText() const override { return label_; }
     const wchar_t* GetItemValueText() const override { return valueText_.c_str(); }
-    const wchar_t* GetItemValueSampleText() const override { return L"100%"; }
-    int IsDrawResourceUsageGraph() const override { return 1; }
+    const wchar_t* GetItemValueSampleText() const override { return sample_; }
+    int IsDrawResourceUsageGraph() const override {
+        return kind_ == Kind::FiveHour || kind_ == Kind::Weekly ? 1 : 0;
+    }
     float GetResourceUsageGraphValue() const override {
         if (remainingPercent_ < 0) {
             return 0.0f;
@@ -42,17 +45,32 @@ public:
             return;
         }
 
-        remainingPercent_ = window_ == Window::FiveHour
+        if (kind_ == Kind::SubscriptionExpiry) {
+            remainingPercent_ = -1;
+            valueText_ = snapshot.hasSubscriptionExpiry
+                ? FormatExpiryDateTime(snapshot.activeUntilUnixSeconds)
+                : L"--";
+            return;
+        }
+
+        if (kind_ == Kind::ResetCreditExpiry) {
+            remainingPercent_ = -1;
+            valueText_ = FormatResetCreditDisplay(snapshot);
+            return;
+        }
+
+        remainingPercent_ = kind_ == Kind::FiveHour
             ? snapshot.fiveHour.remainingPercent
             : snapshot.weekly.remainingPercent;
         valueText_ = FormatRemainingPercent(remainingPercent_);
     }
 
 private:
-    Window window_;
+    Kind kind_;
     const wchar_t* name_;
     const wchar_t* id_;
     const wchar_t* label_;
+    const wchar_t* sample_;
     int remainingPercent_ = -1;
     std::wstring valueText_ = L"--";
 };
@@ -70,6 +88,12 @@ public:
         }
         if (index == 1) {
             return &weeklyItem_;
+        }
+        if (index == 2) {
+            return &expiryItem_;
+        }
+        if (index == 3) {
+            return &resetCreditItem_;
         }
         return nullptr;
     }
@@ -100,6 +124,8 @@ public:
             snapshot_ = std::move(snapshot);
             fiveHourItem_.SetSnapshot(snapshot_);
             weeklyItem_.SetSnapshot(snapshot_);
+            expiryItem_.SetSnapshot(snapshot_);
+            resetCreditItem_.SetSnapshot(snapshot_);
             tooltip_ = BuildTooltip(snapshot_);
         }).detach();
     }
@@ -119,6 +145,8 @@ public:
             snapshot_ = {};
             fiveHourItem_.SetSnapshot(snapshot_);
             weeklyItem_.SetSnapshot(snapshot_);
+            expiryItem_.SetSnapshot(snapshot_);
+            resetCreditItem_.SetSnapshot(snapshot_);
             tooltip_ = L"Codex Usage: waiting for data";
         }
         DataRequired();
@@ -130,7 +158,7 @@ public:
             case TMI_NAME:
                 return L"Codex Usage";
             case TMI_DESCRIPTION:
-                return L"Shows Codex remaining usage for the 5-hour and weekly windows.";
+                return L"Shows Codex remaining usage, subscription expiry, and reset credits.";
             case TMI_AUTHOR:
                 return L"Codex";
             case TMI_COPYRIGHT:
@@ -159,8 +187,10 @@ private:
     CodexUsageConfig config_ = LoadCodexConfig();
     unsigned long long configGeneration_ = 0;
     CodexUsageFetcher fetcher_;
-    CodexUsageItem fiveHourItem_{CodexUsageItem::Window::FiveHour, L"Codex 5h Remaining", L"CodexUsage5h", L"5\u5c0f\u65f6: "};
-    CodexUsageItem weeklyItem_{CodexUsageItem::Window::Weekly, L"Codex Weekly Remaining", L"CodexUsageWeek", L"\u672c \u5468: "};
+    CodexUsageItem fiveHourItem_{CodexUsageItem::Kind::FiveHour, L"Codex 5h Remaining", L"CodexUsage5h", L"5\u5c0f\u65f6: ", L"100%"};
+    CodexUsageItem weeklyItem_{CodexUsageItem::Kind::Weekly, L"Codex Weekly Remaining", L"CodexUsageWeek", L"\u672c \u5468: ", L"100%"};
+    CodexUsageItem expiryItem_{CodexUsageItem::Kind::SubscriptionExpiry, L"Codex Plan Expires", L"CodexUsageExpires", L"\u5230\u671f: ", L"06-10 10:52"};
+    CodexUsageItem resetCreditItem_{CodexUsageItem::Kind::ResetCreditExpiry, L"Codex Reset Expires", L"CodexUsageReset", L"\u91cd\u7f6e\u5361: ", L"07-18 08:42"};
     mutable std::mutex mutex_;
     UsageSnapshot snapshot_;
     std::wstring tooltip_ = L"Codex Usage: waiting for data";

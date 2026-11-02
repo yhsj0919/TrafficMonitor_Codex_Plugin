@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-set(CODEX_USAGE_VERSION "0.1.4" CACHE STRING "CodexUsage plugin version")
+set(CODEX_USAGE_VERSION "0.1.7" CACHE STRING "CodexUsage plugin version")
 
 project(CodexUsage VERSION "${CODEX_USAGE_VERSION}" LANGUAGES CXX RC)
 
